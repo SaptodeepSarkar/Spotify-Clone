@@ -1,5 +1,5 @@
+// AuthContext.tsx - UPDATED
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
-import { apiRequest } from "@/lib/queryClient";
 
 interface User {
   id: string;
@@ -10,6 +10,7 @@ interface User {
 interface AuthContextType {
   user: User | null;
   login: (username: string, password: string) => Promise<void>;
+  register: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   isLoading: boolean;
 }
@@ -57,6 +58,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(data);
   };
 
+  const register = async (username: string, password: string) => {
+    const response = await fetch("/api/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password, confirmPassword: password }),
+      credentials: "include",
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.message || "Registration failed");
+    }
+
+    const data = await response.json();
+    setUser(data);
+  };
+
   const logout = async () => {
     await fetch("/api/auth/logout", {
       method: "POST",
@@ -66,7 +84,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, isLoading }}>
+    <AuthContext.Provider value={{ user, login, register, logout, isLoading }}>
       {children}
     </AuthContext.Provider>
   );

@@ -1,0 +1,20 @@
+[
+  {
+    "id": "1",
+    "title": "FUNK CRIMINAL (SLOWED)",
+    "artist": "ICEDMANE, DYSMANE",
+    "album": "ICEDMANE, DYSMANE",
+    "duration": 92,
+    "coverUrl": "https://c.saavncdn.com/962/FUNK-CRIMINAL-Spanish-2025-20250813205055-500x500.jpg",
+    "audioUrl": "http://127.0.0.1:8000/Downloads/FUNK%20CRIMINAL%20-%20SLOWED.mp3"
+  },
+  {
+    "id": "2",
+    "title": "Hotel California",
+    "artist": "Eagles",
+    "album": "Hotel California",
+    "duration": 391,
+    "coverUrl": "/uploads/hotel-california.jpg",
+    "audioUrl": "https://example.com/music/hotel-california.mp3"
+  }
+]

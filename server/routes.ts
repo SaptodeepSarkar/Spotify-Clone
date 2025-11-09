@@ -4,12 +4,13 @@ import { storage } from "./storage";
 import express from "express";
 import session from "express-session";
 import multer, { type FileFilterCallback } from "multer";
-import type { Request as MulterRequest } from "multer";
 import path from "path";
 import fs from "fs/promises";
 import { z } from "zod";
 import { insertSongSchema, insertPlaylistSchema } from "@shared/schema";
+import { registerUserSchema } from "@shared/schema";
 import bcrypt from "bcryptjs";
+import { getAudioDuration } from "./utils/audioUtils";
 
 // Extend session type
 declare module "express-session" {
@@ -34,16 +35,29 @@ const upload = multer({
     },
   }),
   fileFilter: (req: Express.Request, file: Express.Multer.File, cb: FileFilterCallback) => {
-    const allowedTypes = /jpeg|jpg|png|gif|webp/;
-    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = allowedTypes.test(file.mimetype);
-    if (extname && mimetype) {
-      cb(null, true);
+    const allowedImageTypes = /jpeg|jpg|png|gif|webp/;
+    const allowedAudioTypes = /mp3|wav|ogg|m4a|aac/;
+    
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (file.fieldname === 'cover') {
+      const isValidImage = allowedImageTypes.test(ext) && allowedImageTypes.test(file.mimetype);
+      if (isValidImage) {
+        cb(null, true);
+      } else {
+        cb(new Error("Only image files are allowed for cover"));
+      }
+    } else if (file.fieldname === 'audio') {
+      const isValidAudio = allowedAudioTypes.test(ext);
+      if (isValidAudio) {
+        cb(null, true);
+      } else {
+        cb(new Error("Only audio files (mp3, wav, ogg, m4a, aac) are allowed"));
+      }
     } else {
-      cb(new Error("Only image files are allowed"));
+      cb(new Error("Invalid field name"));
     }
   },
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit for audio files
 });
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -134,6 +148,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post("/api/auth/register", async (req, res) => {
+    try {
+      const { username, password } = registerUserSchema.parse(req.body);
+  
+      // Check if user already exists
+      const existingUser = await storage.getUserByUsername(username);
+      if (existingUser) {
+        return res.status(400).json({ message: "Username already exists" });
+      }
+  
+      // Create user (password will be hashed in storage)
+      const user = await storage.createUser({
+        username,
+        password,
+      });
+  
+      // Regenerate session to prevent session fixation attacks
+      req.session.regenerate((err) => {
+        if (err) {
+          return res.status(500).json({ message: "Session error" });
+        }
+  
+        req.session.userId = user.id;
+        req.session.username = user.username;
+        req.session.role = user.role;
+  
+        res.status(201).json({
+          id: user.id,
+          username: user.username,
+          role: user.role,
+        });
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ 
+          message: "Invalid registration data", 
+          errors: error.errors 
+        });
+      }
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
   app.post("/api/auth/logout", (req, res) => {
     req.session.destroy((err) => {
       if (err) {
@@ -183,17 +240,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post(
     "/api/songs",
     requireAdmin,
-    upload.single("cover"),
+    upload.fields([
+      { name: 'cover', maxCount: 1 },
+      { name: 'audio', maxCount: 1 }
+    ]),
     async (req: Request, res: Response) => {
       try {
-        const file = (req as any).file;
+        const files = req.files as { [fieldname: string]: Express.Multer.File[] };
+        const coverFile = files['cover']?.[0];
+        const audioFile = files['audio']?.[0];
+
+        if (!audioFile) {
+          return res.status(400).json({ message: "Audio file is required" });
+        }
+
+        // Get audio duration
+        const duration = await getAudioDuration(audioFile.path);
+
         const songData = insertSongSchema.parse({
           title: req.body.title,
           artist: req.body.artist,
           album: req.body.album,
-          duration: parseInt(req.body.duration),
-          audioUrl: req.body.audioUrl,
-          coverUrl: file ? `/uploads/${file.filename}` : undefined,
+          duration: duration,
+          audioUrl: `/uploads/${audioFile.filename}`,
+          coverUrl: coverFile ? `/uploads/${coverFile.filename}` : undefined,
         });
 
         const song = await storage.createSong(songData);
@@ -202,6 +272,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (error instanceof z.ZodError) {
           return res.status(400).json({ message: "Invalid song data", errors: error.errors });
         }
+        console.error('Error creating song:', error);
         res.status(500).json({ message: "Failed to create song" });
       }
     }
@@ -320,23 +391,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/playlists", requireAuth, async (req, res) => {
-    try {
-      const playlistData = insertPlaylistSchema.parse({
-        name: req.body.name,
-        userId: req.session.userId!,
-        songIds: req.body.songIds || [],
-      });
-
-      const playlist = await storage.createPlaylist(playlistData);
-      res.status(201).json(playlist);
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Invalid playlist data", errors: error.errors });
+  app.post(
+    "/api/playlists",
+    requireAuth,
+    upload.single("cover"),
+    async (req: Request, res: Response) => {
+      try {
+        const file = (req as any).file;
+        
+        // Get form data
+        const { name, description, songIds } = req.body;
+        
+        if (!name) {
+          return res.status(400).json({ message: "Playlist name is required" });
+        }
+      
+        const playlistData = {
+          name,
+          description: description || null,
+          coverUrl: file ? `/uploads/${file.filename}` : null,
+          userId: req.session.userId!,
+          songIds: songIds ? JSON.parse(songIds) : [],
+        };
+      
+        const playlist = await storage.createPlaylist(playlistData);
+        res.status(201).json(playlist);
+      } catch (error) {
+        console.error('Error creating playlist:', error);
+        res.status(500).json({ message: "Failed to create playlist" });
       }
-      res.status(500).json({ message: "Failed to create playlist" });
     }
-  });
+  );
 
   app.patch("/api/playlists/:id", requireAuth, async (req, res) => {
     try {

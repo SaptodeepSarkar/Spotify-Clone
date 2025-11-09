@@ -1,123 +1,222 @@
+// storage.ts - UPDATED
 import { type User, type InsertUser, type Song, type InsertSong, type Playlist, type InsertPlaylist } from "@shared/schema";
-import { db } from "./db";
-import { users, songs, playlists } from "@shared/schema";
-import { eq } from "drizzle-orm";
+import fs from 'fs/promises';
+import path from 'path';
+import { randomUUID } from 'crypto';
+import bcrypt from 'bcryptjs';
+
+const DATA_DIR = path.join(process.cwd(), 'server', 'data');
+
+// Ensure data directory exists
+async function ensureDataDir() {
+    try {
+        await fs.access(DATA_DIR);
+    } catch {
+        await fs.mkdir(DATA_DIR, { recursive: true });
+    }
+}
+
+// Generic file storage operations
+async function readJSONFile<T>(filename: string): Promise<T[]> {
+    try {
+        const content = await fs.readFile(path.join(DATA_DIR, filename), 'utf-8');
+        return JSON.parse(content);
+    } catch (error) {
+        return [];
+    }
+}
+
+async function writeJSONFile<T>(filename: string, data: T[]): Promise<void> {
+    await ensureDataDir();
+    await fs.writeFile(
+        path.join(DATA_DIR, filename),
+        JSON.stringify(data, null, 2),
+        'utf-8'
+    );
+}
 
 export interface IStorage {
-  // User operations
-  getUser(id: string): Promise<User | undefined>;
-  getUserByUsername(username: string): Promise<User | undefined>;
-  createUser(user: InsertUser): Promise<User>;
-  getAllUsers(): Promise<User[]>;
-  updateUserSuspension(id: string, suspended: boolean, suspendedUntil?: Date | null, suspensionReason?: string | null): Promise<User | undefined>;
-  
-  // Song operations
-  getSong(id: string): Promise<Song | undefined>;
-  getAllSongs(): Promise<Song[]>;
-  createSong(song: InsertSong): Promise<Song>;
-  updateSong(id: string, song: Partial<InsertSong>): Promise<Song | undefined>;
-  deleteSong(id: string): Promise<boolean>;
-  
-  // Playlist operations
-  getPlaylist(id: string): Promise<Playlist | undefined>;
-  getPlaylistsByUserId(userId: string): Promise<Playlist[]>;
-  createPlaylist(playlist: InsertPlaylist): Promise<Playlist>;
-  updatePlaylist(id: string, playlist: Partial<InsertPlaylist>): Promise<Playlist | undefined>;
-  deletePlaylist(id: string): Promise<boolean>;
+    // User operations
+    getUser(id: string): Promise<User | undefined>;
+    getUserByUsername(username: string): Promise<User | undefined>;
+    createUser(user: InsertUser): Promise<User>;
+    getAllUsers(): Promise<User[]>;
+    updateUserSuspension(id: string, suspended: boolean, suspendedUntil?: Date | null, suspensionReason?: string | null): Promise<User | undefined>;
+    
+    // Song operations
+    getSong(id: string): Promise<Song | undefined>;
+    getAllSongs(): Promise<Song[]>;
+    createSong(song: InsertSong): Promise<Song>;
+    updateSong(id: string, song: Partial<InsertSong>): Promise<Song | undefined>;
+    deleteSong(id: string): Promise<boolean>;
+    
+    // Playlist operations
+    getPlaylist(id: string): Promise<Playlist | undefined>;
+    getPlaylistsByUserId(userId: string): Promise<Playlist[]>;
+    createPlaylist(playlist: InsertPlaylist): Promise<Playlist>;
+    updatePlaylist(id: string, playlist: Partial<InsertPlaylist>): Promise<Playlist | undefined>;
+    deletePlaylist(id: string): Promise<boolean>;
 }
 
-export class DbStorage implements IStorage {
-  // User operations
-  async getUser(id: string): Promise<User | undefined> {
-    const result = await db.select().from(users).where(eq(users.id, id));
-    return result[0];
-  }
+export class JsonStorage implements IStorage {
+    // User operations
+    async getUser(id: string): Promise<User | undefined> {
+        const users = await readJSONFile<User>('users.json');
+        return users.find(user => user.id === id);
+    }
 
-  async getUserByUsername(username: string): Promise<User | undefined> {
-    const result = await db.select().from(users).where(eq(users.username, username));
-    return result[0];
-  }
+    async getUserByUsername(username: string): Promise<User | undefined> {
+        const users = await readJSONFile<User>('users.json');
+        return users.find(user => user.username === username);
+    }
 
-  async createUser(insertUser: InsertUser): Promise<User> {
-    const result = await db.insert(users).values(insertUser).returning();
-    return result[0];
-  }
+    async createUser(insertUser: InsertUser): Promise<User> {
+        const users = await readJSONFile<User>('users.json');
+        
+        // Check if username already exists
+        const existingUser = users.find(user => user.username === insertUser.username);
+        if (existingUser) {
+            throw new Error("Username already exists");
+        }
 
-  async getAllUsers(): Promise<User[]> {
-    return await db.select().from(users);
-  }
+        // Hash password before storing
+        const hashedPassword = await bcrypt.hash(insertUser.password, 12);
 
-  async updateUserSuspension(
-    id: string,
-    suspended: boolean,
-    suspendedUntil?: Date | null,
-    suspensionReason?: string | null
-  ): Promise<User | undefined> {
-    const result = await db
-      .update(users)
-      .set({ suspended, suspendedUntil, suspensionReason })
-      .where(eq(users.id, id))
-      .returning();
-    return result[0];
-  }
+        const newUser: User = {
+            id: randomUUID(),
+            username: insertUser.username,
+            password: hashedPassword,
+            role: 'user',
+            suspended: false,
+            suspendedUntil: null,
+            suspensionReason: null
+        };
+        
+        users.push(newUser);
+        await writeJSONFile('users.json', users);
+        return newUser;
+    }
 
-  // Song operations
-  async getSong(id: string): Promise<Song | undefined> {
-    const result = await db.select().from(songs).where(eq(songs.id, id));
-    return result[0];
-  }
+    async getAllUsers(): Promise<User[]> {
+        return await readJSONFile<User>('users.json');
+    }
 
-  async getAllSongs(): Promise<Song[]> {
-    return await db.select().from(songs);
-  }
+    async updateUserSuspension(
+        id: string,
+        suspended: boolean,
+        suspendedUntil?: Date | null,
+        suspensionReason?: string | null
+    ): Promise<User | undefined> {
+        const users = await readJSONFile<User>('users.json');
+        const userIndex = users.findIndex(user => user.id === id);
+        if (userIndex === -1) return undefined;
 
-  async createSong(song: InsertSong): Promise<Song> {
-    const result = await db.insert(songs).values(song).returning();
-    return result[0];
-  }
+        users[userIndex] = {
+            ...users[userIndex],
+            suspended,
+            suspendedUntil: suspendedUntil || null,
+            suspensionReason: suspensionReason || null
+        };
+        await writeJSONFile('users.json', users);
+        return users[userIndex];
+    }
 
-  async updateSong(id: string, song: Partial<InsertSong>): Promise<Song | undefined> {
-    const result = await db
-      .update(songs)
-      .set(song)
-      .where(eq(songs.id, id))
-      .returning();
-    return result[0];
-  }
+    // Song operations
+    async getSong(id: string): Promise<Song | undefined> {
+        const songs = await readJSONFile<Song>('songs.json');
+        return songs.find(song => song.id === id);
+    }
 
-  async deleteSong(id: string): Promise<boolean> {
-    const result = await db.delete(songs).where(eq(songs.id, id)).returning();
-    return result.length > 0;
-  }
+    async getAllSongs(): Promise<Song[]> {
+        return await readJSONFile<Song>('songs.json');
+    }
 
-  // Playlist operations
-  async getPlaylist(id: string): Promise<Playlist | undefined> {
-    const result = await db.select().from(playlists).where(eq(playlists.id, id));
-    return result[0];
-  }
+    async createSong(song: InsertSong): Promise<Song> {
+        const songs = await readJSONFile<Song>('songs.json');
+        const newSong: Song = {
+            id: randomUUID(),
+            ...song,
+            coverUrl: song.coverUrl || null
+        };
+        songs.push(newSong);
+        await writeJSONFile('songs.json', songs);
+        return newSong;
+    }
 
-  async getPlaylistsByUserId(userId: string): Promise<Playlist[]> {
-    return await db.select().from(playlists).where(eq(playlists.userId, userId));
-  }
+    async updateSong(id: string, songUpdate: Partial<InsertSong>): Promise<Song | undefined> {
+        const songs = await readJSONFile<Song>('songs.json');
+        const songIndex = songs.findIndex(song => song.id === id);
+        if (songIndex === -1) return undefined;
 
-  async createPlaylist(playlist: InsertPlaylist): Promise<Playlist> {
-    const result = await db.insert(playlists).values(playlist).returning();
-    return result[0];
-  }
+        songs[songIndex] = {
+            ...songs[songIndex],
+            ...songUpdate,
+            coverUrl: songUpdate.coverUrl || songs[songIndex].coverUrl
+        };
+        await writeJSONFile('songs.json', songs);
+        return songs[songIndex];
+    }
 
-  async updatePlaylist(id: string, playlist: Partial<InsertPlaylist>): Promise<Playlist | undefined> {
-    const result = await db
-      .update(playlists)
-      .set(playlist)
-      .where(eq(playlists.id, id))
-      .returning();
-    return result[0];
-  }
+    async deleteSong(id: string): Promise<boolean> {
+        const songs = await readJSONFile<Song>('songs.json');
+        const initialLength = songs.length;
+        const filteredSongs = songs.filter(song => song.id !== id);
+        if (filteredSongs.length === initialLength) return false;
+        await writeJSONFile('songs.json', filteredSongs);
+        return true;
+    }
 
-  async deletePlaylist(id: string): Promise<boolean> {
-    const result = await db.delete(playlists).where(eq(playlists.id, id)).returning();
-    return result.length > 0;
-  }
+    // Playlist operations
+    async getPlaylist(id: string): Promise<Playlist | undefined> {
+        const playlists = await readJSONFile<Playlist>('playlists.json');
+        return playlists.find(playlist => playlist.id === id);
+    }
+
+    async getPlaylistsByUserId(userId: string): Promise<Playlist[]> {
+        const playlists = await readJSONFile<Playlist>('playlists.json');
+        return playlists.filter(playlist => playlist.userId === userId);
+    }
+
+    async createPlaylist(playlist: InsertPlaylist): Promise<Playlist> {
+        const playlists = await readJSONFile<Playlist>('playlists.json');
+        const newPlaylist: Playlist = {
+            id: randomUUID(),
+            ...playlist,
+            description: playlist.description || null,
+            coverUrl: playlist.coverUrl || null,
+            songIds: playlist.songIds || [],
+            createdAt: new Date()
+        };
+        playlists.push(newPlaylist);
+        await writeJSONFile('playlists.json', playlists);
+        return newPlaylist;
+    }
+
+    async updatePlaylist(id: string, playlistUpdate: Partial<InsertPlaylist>): Promise<Playlist | undefined> {
+        const playlists = await readJSONFile<Playlist>('playlists.json');
+        const playlistIndex = playlists.findIndex(playlist => playlist.id === id);
+        if (playlistIndex === -1) return undefined;
+
+        playlists[playlistIndex] = {
+            ...playlists[playlistIndex],
+            ...playlistUpdate,
+            description: playlistUpdate.description !== undefined ? playlistUpdate.description : playlists[playlistIndex].description,
+            coverUrl: playlistUpdate.coverUrl !== undefined ? playlistUpdate.coverUrl : playlists[playlistIndex].coverUrl,
+            songIds: playlistUpdate.songIds || playlists[playlistIndex].songIds
+        };
+        await writeJSONFile('playlists.json', playlists);
+        return playlists[playlistIndex];
+    }
+
+    async deletePlaylist(id: string): Promise<boolean> {
+        const playlists = await readJSONFile<Playlist>('playlists.json');
+        const initialLength = playlists.length;
+        const filteredPlaylists = playlists.filter(playlist => playlist.id !== id);
+        if (filteredPlaylists.length === initialLength) return false;
+        await writeJSONFile('playlists.json', filteredPlaylists);
+        return true;
+    }
 }
 
-export const storage = new DbStorage();
+// Create and export storage instance
+export const storage = new JsonStorage();

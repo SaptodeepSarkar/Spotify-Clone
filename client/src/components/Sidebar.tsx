@@ -1,3 +1,4 @@
+// Sidebar.tsx - UPDATED
 import { Home, Search, Library, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -5,11 +6,18 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 interface SidebarProps {
   activePage: string;
   onNavigate: (page: string) => void;
+  onPlaylistClick?: (playlistId: string) => void;
   userPlaylists?: { id: string; name: string; }[];
   onCreatePlaylist?: () => void;
 }
 
-export default function Sidebar({ activePage, onNavigate, userPlaylists = [], onCreatePlaylist }: SidebarProps) {
+export default function Sidebar({ 
+  activePage, 
+  onNavigate, 
+  userPlaylists = [], 
+  onCreatePlaylist,
+  onPlaylistClick 
+}: SidebarProps) {
   return (
     <div className="w-60 bg-sidebar h-screen flex flex-col border-r border-sidebar-border">
       <div className="p-6">
@@ -66,6 +74,7 @@ export default function Sidebar({ activePage, onNavigate, userPlaylists = [], on
                 key={playlist.id}
                 variant="ghost"
                 className="w-full justify-start text-sm text-muted-foreground hover:text-foreground"
+                onClick={() => onPlaylistClick?.(playlist.id)}
                 data-testid={`playlist-${playlist.id}`}
               >
                 {playlist.name}

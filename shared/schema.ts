@@ -1,53 +1,68 @@
-import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, timestamp, boolean, integer } from "drizzle-orm/pg-core";
-import { createInsertSchema } from "drizzle-zod";
+// schema.ts - UPDATED
 import { z } from "zod";
 
-export const users = pgTable("users", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  username: text("username").notNull().unique(),
-  password: text("password").notNull(),
-  role: text("role").notNull().default("user"),
-  suspended: boolean("suspended").default(false),
-  suspendedUntil: timestamp("suspended_until"),
-  suspensionReason: text("suspension_reason"),
+export const userSchema = z.object({
+  id: z.string(),
+  username: z.string().min(3, "Username must be at least 3 characters"),
+  password: z.string().min(6, "Password must be at least 6 characters"),
+  role: z.string().default("user"),
+  suspended: z.boolean().default(false),
+  suspendedUntil: z.date().nullable(),
+  suspensionReason: z.string().nullable(),
 });
 
-export const songs = pgTable("songs", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  title: text("title").notNull(),
-  artist: text("artist").notNull(),
-  album: text("album").notNull(),
-  duration: integer("duration").notNull(),
-  coverUrl: text("cover_url"),
-  audioUrl: text("audio_url").notNull(),
+export const songSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  artist: z.string(),
+  album: z.string(),
+  duration: z.number(),
+  coverUrl: z.string().nullable(),
+  audioUrl: z.string(),
 });
 
-export const playlists = pgTable("playlists", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  name: text("name").notNull(),
-  userId: varchar("user_id").notNull(),
-  songIds: text("song_ids").array().notNull().default(sql`'{}'::text[]`),
-  createdAt: timestamp("created_at").defaultNow(),
+export const playlistSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  description: z.string().nullable(),
+  coverUrl: z.string().nullable(),
+  userId: z.string(),
+  songIds: z.array(z.string()).default([]),
+  createdAt: z.date(),
 });
 
-export const insertUserSchema = createInsertSchema(users).pick({
-  username: true,
-  password: true,
+// Insert schemas omit auto-generated fields
+export const insertUserSchema = userSchema.omit({ 
+  id: true, 
+  role: true, 
+  suspended: true,
+  suspendedUntil: true,
+  suspensionReason: true,
 });
 
-export const insertSongSchema = createInsertSchema(songs).omit({
+export const insertSongSchema = songSchema.omit({ 
   id: true,
 });
 
-export const insertPlaylistSchema = createInsertSchema(playlists).omit({
+export const insertPlaylistSchema = playlistSchema.omit({ 
   id: true,
   createdAt: true,
 });
 
+// Registration schema with password confirmation
+export const registerUserSchema = z.object({
+  username: z.string().min(3, "Username must be at least 3 characters"),
+  password: z.string().min(6, "Password must be at least 6 characters"),
+  confirmPassword: z.string(),
+}).refine((data) => data.password === data.confirmPassword, {
+  message: "Passwords don't match",
+  path: ["confirmPassword"],
+});
+
+export type User = z.infer<typeof userSchema>;
 export type InsertUser = z.infer<typeof insertUserSchema>;
-export type User = typeof users.$inferSelect;
+export type Song = z.infer<typeof songSchema>;
 export type InsertSong = z.infer<typeof insertSongSchema>;
-export type Song = typeof songs.$inferSelect;
+export type Playlist = z.infer<typeof playlistSchema>;
 export type InsertPlaylist = z.infer<typeof insertPlaylistSchema>;
-export type Playlist = typeof playlists.$inferSelect;
+export type RegisterUser = z.infer<typeof registerUserSchema>;

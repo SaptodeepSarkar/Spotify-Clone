@@ -1,3 +1,4 @@
+// App.tsx - UPDATED
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider, useQuery, useMutation } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -7,12 +8,14 @@ import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { PlayerProvider, usePlayer } from "@/contexts/PlayerContext";
 import Sidebar from "@/components/Sidebar";
 import PlayerBar from "@/components/PlayerBar";
-import LoginModal from "@/components/LoginModal";
+import AuthModal from "@/components/AuthModal";
 import SongCard from "@/components/SongCard";
 import SongTable from "@/components/SongTable";
 import AddSongModal from "@/components/AddSongModal";
 import UserManagementTable from "@/components/UserManagementTable";
 import SuspendUserModal from "@/components/SuspendUserModal";
+import PlaylistDetail from "@/components/PlaylistDetail";
+import EnhancedCreatePlaylist from "@/components/EnhancedCreatePlaylist";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,7 +26,7 @@ import { useToast } from "@/hooks/use-toast";
 import type { Song, Playlist, User } from "@shared/schema";
 
 function MainApp() {
-  const { user, login, logout, isLoading: authLoading } = useAuth();
+  const { user, login, register, logout, isLoading: authLoading } = useAuth();
   const {
     currentSong,
     isPlaying,
@@ -46,9 +49,11 @@ function MainApp() {
   const [activePage, setActivePage] = useState("home");
   const [showAddSongModal, setShowAddSongModal] = useState(false);
   const [showSuspendModal, setShowSuspendModal] = useState(false);
+  const [showCreatePlaylistModal, setShowCreatePlaylistModal] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [editingSongId, setEditingSongId] = useState<string | null>(null);
+  const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
   const { toast } = useToast();
 
   // Show login modal if not authenticated
@@ -75,6 +80,11 @@ function MainApp() {
     queryKey: ["/api/users"],
     enabled: user?.role === "admin",
   });
+
+  // Get selected playlist data
+  const selectedPlaylist = selectedPlaylistId 
+    ? playlists.find(p => p.id === selectedPlaylistId)
+    : null;
 
   // Delete song mutation
   const deleteSongMutation = useMutation({
@@ -139,25 +149,47 @@ function MainApp() {
     },
   });
 
-  // Create playlist mutation
+  // Enhanced create playlist mutation
   const createPlaylistMutation = useMutation({
-    mutationFn: async (name: string) => {
+    mutationFn: async (playlistData: { name: string; description?: string; coverFile?: File }) => {
+      const formData = new FormData();
+      formData.append("name", playlistData.name);
+      
+      if (playlistData.description) {
+        formData.append("description", playlistData.description);
+      }
+      
+      if (playlistData.coverFile) {
+        formData.append("cover", playlistData.coverFile);
+      }
+      
+      formData.append("songIds", JSON.stringify([]));
+    
       const response = await fetch("/api/playlists", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, songIds: [] }),
+        body: formData,
         credentials: "include",
       });
-      if (!response.ok) throw new Error("Failed to create playlist");
+      
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || "Failed to create playlist");
+      }
+      
       return response.json();
     },
     onSuccess: () => {
       refetchPlaylists();
       queryClient.invalidateQueries({ queryKey: ["/api/playlists"] });
+      setShowCreatePlaylistModal(false);
       toast({ title: "Playlist created successfully" });
     },
-    onError: () => {
-      toast({ title: "Failed to create playlist", variant: "destructive" });
+    onError: (error: any) => {
+      toast({ 
+        title: "Failed to create playlist", 
+        description: error.message,
+        variant: "destructive" 
+      });
     },
   });
 
@@ -182,10 +214,43 @@ function MainApp() {
   };
 
   const handleCreatePlaylist = () => {
-    const name = prompt("Enter playlist name:");
-    if (name) {
-      createPlaylistMutation.mutate(name);
+    setShowCreatePlaylistModal(true);
+  };
+
+  const handleEnhancedCreatePlaylist = (playlistData: { name: string; description?: string; coverFile?: File }) => {
+    createPlaylistMutation.mutate(playlistData);
+  };
+
+  const handlePlaylistClick = (playlistId: string) => {
+    setSelectedPlaylistId(playlistId);
+    setActivePage("playlist-detail");
+  };
+
+  const handleBackFromPlaylist = () => {
+    setSelectedPlaylistId(null);
+    setActivePage("library");
+  };
+
+  const handlePlaySong = (songId: string) => {
+    const song = songs.find((s: any) => s.id === songId);
+    if (song) {
+      playSong(song);
+      setQueue(songs);
     }
+  };
+
+  const handlePlaySongInPlaylist = (songId: string) => {
+    const song = songs.find((s: any) => s.id === songId);
+    if (song && selectedPlaylist) {
+      const playlistSongs = songs.filter(s => selectedPlaylist.songIds?.includes(s.id));
+      setQueue(playlistSongs);
+      playSong(song);
+    }
+  };
+
+  const handleSuspendUser = (userId: string) => {
+    setSelectedUserId(userId);
+    setShowSuspendModal(true);
   };
 
   const handleAddSong = async (songData: any) => {
@@ -221,24 +286,25 @@ function MainApp() {
     }
   };
 
-  const handlePlaySong = (songId: string) => {
-    const song = songs.find((s: any) => s.id === songId);
-    if (song) {
-      playSong(song);
-      setQueue(songs);
-    }
-  };
-
-  const handleSuspendUser = (userId: string) => {
-    setSelectedUserId(userId);
-    setShowSuspendModal(true);
-  };
-
   const filteredSongs = songs.filter((song) =>
     song.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
     song.artist.toLowerCase().includes(searchQuery.toLowerCase()) ||
     song.album.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  const handleRegister = async (username: string, password: string) => {
+    try {
+      await register(username, password);
+      setShowLoginModal(false);
+      toast({ title: `Welcome to Spotify, ${username}!` });
+    } catch (error: any) {
+      toast({
+        title: "Registration failed",
+        description: error.message || "Unable to create account",
+        variant: "destructive",
+      });
+    }
+  };
 
   if (authLoading) {
     return (
@@ -260,10 +326,11 @@ function MainApp() {
             <p className="text-muted-foreground mb-4">Please log in to continue</p>
           </div>
         </div>
-        <LoginModal
+        <AuthModal
           open={showLoginModal}
           onClose={() => setShowLoginModal(false)}
           onLogin={handleLogin}
+          onRegister={handleRegister}
         />
       </>
     );
@@ -276,6 +343,7 @@ function MainApp() {
         onNavigate={setActivePage}
         userPlaylists={playlists}
         onCreatePlaylist={handleCreatePlaylist}
+        onPlaylistClick={handlePlaylistClick}
       />
 
       <div className="flex-1 flex flex-col">
@@ -404,17 +472,39 @@ function MainApp() {
                         <Card
                           key={playlist.id}
                           className="p-4 hover-elevate active-elevate-2 cursor-pointer"
+                          onClick={() => handlePlaylistClick(playlist.id)}
                         >
-                          <div className="aspect-square bg-muted rounded-md mb-4 flex items-center justify-center">
-                            <Music className="w-12 h-12 text-muted-foreground" />
+                          <div className="aspect-square bg-muted rounded-md mb-4 flex items-center justify-center overflow-hidden">
+                            {playlist.coverUrl ? (
+                              <img 
+                                src={playlist.coverUrl} 
+                                alt={playlist.name}
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <Music className="w-12 h-12 text-muted-foreground" />
+                            )}
                           </div>
-                          <h3 className="font-semibold">{playlist.name}</h3>
+                          <h3 className="font-semibold truncate">{playlist.name}</h3>
+                          {playlist.description && (
+                            <p className="text-xs text-muted-foreground truncate mt-1">
+                              {playlist.description}
+                            </p>
+                          )}
                         </Card>
                       ))}
                     </div>
                   </TabsContent>
                 </Tabs>
               </div>
+            )}
+
+            {activePage === "playlist-detail" && selectedPlaylist && (
+              <PlaylistDetail
+                playlist={selectedPlaylist}
+                songs={songs}
+                onBack={handleBackFromPlaylist}
+              />
             )}
 
             {activePage === "admin" && user.role === "admin" && (
@@ -563,6 +653,12 @@ function MainApp() {
             ? songs.find((s) => s.id === editingSongId)
             : undefined
         }
+      />
+
+      <EnhancedCreatePlaylist
+        open={showCreatePlaylistModal}
+        onClose={() => setShowCreatePlaylistModal(false)}
+        onSubmit={handleEnhancedCreatePlaylist}
       />
 
       <SuspendUserModal
