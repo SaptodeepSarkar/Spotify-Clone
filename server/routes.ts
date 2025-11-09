@@ -9,6 +9,7 @@ import path from "path";
 import fs from "fs/promises";
 import { z } from "zod";
 import { insertSongSchema, insertPlaylistSchema } from "@shared/schema";
+import bcrypt from "bcryptjs";
 
 // Extend session type
 declare module "express-session" {
@@ -88,7 +89,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { username, password } = req.body;
       const user = await storage.getUserByUsername(username);
 
-      if (!user || user.password !== password) {
+      if (!user) {
+        return res.status(401).json({ message: "Invalid credentials" });
+      }
+
+      // Verify password using bcrypt
+      const isValidPassword = await bcrypt.compare(password, user.password);
+      if (!isValidPassword) {
         return res.status(401).json({ message: "Invalid credentials" });
       }
 
@@ -106,14 +113,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      req.session.userId = user.id;
-      req.session.username = user.username;
-      req.session.role = user.role;
+      // Regenerate session to prevent session fixation attacks
+      req.session.regenerate((err) => {
+        if (err) {
+          return res.status(500).json({ message: "Session error" });
+        }
 
-      res.json({
-        id: user.id,
-        username: user.username,
-        role: user.role,
+        req.session.userId = user.id;
+        req.session.username = user.username;
+        req.session.role = user.role;
+
+        res.json({
+          id: user.id,
+          username: user.username,
+          role: user.role,
+        });
       });
     } catch (error) {
       res.status(500).json({ message: "Internal server error" });

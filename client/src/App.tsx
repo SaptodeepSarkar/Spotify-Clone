@@ -2,7 +2,7 @@ import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider, useQuery, useMutation } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { PlayerProvider, usePlayer } from "@/contexts/PlayerContext";
 import Sidebar from "@/components/Sidebar";
@@ -52,11 +52,11 @@ function MainApp() {
   const { toast } = useToast();
 
   // Show login modal if not authenticated
-  useState(() => {
+  useEffect(() => {
     if (!authLoading && !user) {
       setShowLoginModal(true);
     }
-  });
+  }, [authLoading, user]);
 
   // Fetch songs
   const { data: songs = [], refetch: refetchSongs } = useQuery<Song[]>({

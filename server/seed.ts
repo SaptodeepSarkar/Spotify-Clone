@@ -1,20 +1,23 @@
 import { storage } from "./storage";
+import bcrypt from "bcryptjs";
 
 async function seed() {
   console.log("Seeding database...");
 
-  // Create admin user
+  // Create admin user with hashed password
+  const adminPassword = await bcrypt.hash("admin123", 10);
   const adminUser = await storage.createUser({
     username: "admin",
-    password: "admin123", // In production, this would be hashed
+    password: adminPassword,
     role: "admin",
   });
   console.log("Created admin user:", adminUser.username);
 
-  // Create regular users
+  // Create regular users with hashed password
+  const userPassword = await bcrypt.hash("user123", 10);
   const regularUser = await storage.createUser({
     username: "user",
-    password: "user123",
+    password: userPassword,
     role: "user",
   });
   console.log("Created regular user:", regularUser.username);
