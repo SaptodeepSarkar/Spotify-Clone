@@ -1,4 +1,4 @@
-// App.tsx - UPDATED
+// App.tsx
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider, useQuery, useMutation } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -12,6 +12,7 @@ import AuthModal from "@/components/AuthModal";
 import SongCard from "@/components/SongCard";
 import SongTable from "@/components/SongTable";
 import AddSongModal from "@/components/AddSongModal";
+import AddToPlaylistModal from "@/components/AddToPlaylistModal"
 import UserManagementTable from "@/components/UserManagementTable";
 import SuspendUserModal from "@/components/SuspendUserModal";
 import PlaylistDetail from "@/components/PlaylistDetail";
@@ -20,7 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Search, Plus, Users, Music } from "lucide-react";
+import { Search, Plus, Users, Music, Trash2 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
 import type { Song, Playlist, User } from "@shared/schema";
@@ -46,6 +47,7 @@ function MainApp() {
   } = usePlayer();
   
   const [showLoginModal, setShowLoginModal] = useState(false);
+  const [showAddToPlaylistModal, setShowAddToPlaylistModal] = useState(false);
   const [activePage, setActivePage] = useState("home");
   const [showAddSongModal, setShowAddSongModal] = useState(false);
   const [showSuspendModal, setShowSuspendModal] = useState(false);
@@ -253,6 +255,7 @@ function MainApp() {
     setShowSuspendModal(true);
   };
 
+  // UPDATED: handleAddSong function with dual upload support
   const handleAddSong = async (songData: any) => {
     try {
       const formData = new FormData();
@@ -260,9 +263,19 @@ function MainApp() {
       formData.append("artist", songData.artist);
       formData.append("album", songData.album);
       formData.append("duration", songData.duration.toString());
-      formData.append("audioUrl", songData.audioUrl);
+      
+      // Handle audio - either file or URL
+      if (songData.audioFile) {
+        formData.append("audioFile", songData.audioFile);
+      } else if (songData.audioUrl) {
+        formData.append("audioUrl", songData.audioUrl);
+      }
+      
+      // Handle cover - either file or URL
       if (songData.coverFile) {
-        formData.append("cover", songData.coverFile);
+        formData.append("coverFile", songData.coverFile);
+      } else if (songData.coverImageUrl) {
+        formData.append("coverImageUrl", songData.coverImageUrl);
       }
 
       const url = editingSongId ? `/api/songs/${editingSongId}` : "/api/songs";
@@ -292,6 +305,41 @@ function MainApp() {
     song.album.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  // Add this mutation for adding songs to playlists:
+  const addToPlaylistMutation = useMutation({
+    mutationFn: async ({ playlistId, songId }: { playlistId: string; songId: string }) => {
+      const response = await fetch(`/api/playlists/${playlistId}/add-song`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ songId }),
+        credentials: "include",
+      });
+      
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || "Failed to add song to playlist");
+      }
+      
+      return response.json();
+    },
+    onSuccess: () => {
+      refetchPlaylists();
+      queryClient.invalidateQueries({ queryKey: ["/api/playlists"] });
+    },
+  });
+  
+  // Add this function:
+  const handleAddToPlaylist = async (playlistId: string, songId: string) => {
+    await addToPlaylistMutation.mutateAsync({ playlistId, songId });
+  };
+  
+  // Add this function for the PlayerBar:
+  const handleOpenAddToPlaylist = () => {
+    if (currentSong) {
+      setShowAddToPlaylistModal(true);
+    }
+  };
+
   const handleRegister = async (username: string, password: string) => {
     try {
       await register(username, password);
@@ -304,6 +352,106 @@ function MainApp() {
         variant: "destructive",
       });
     }
+  };
+
+  const removeSongFromPlaylistMutation = useMutation({
+    mutationFn: async ({ playlistId, songId }: { playlistId: string; songId: string }) => {
+      const response = await fetch(`/api/playlists/${playlistId}/remove-song`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ songId }),
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        // Try to parse error message, but handle cases where response might not be JSON
+        let errorMessage = "Failed to remove song from playlist";
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.message || errorMessage;
+        } catch {
+          // If response is not JSON, use status text
+          errorMessage = response.statusText || errorMessage;
+        }
+        throw new Error(errorMessage);
+      }
+
+      // Ensure response is JSON before parsing
+      const contentType = response.headers.get("content-type");
+      if (contentType && contentType.includes("application/json")) {
+        return response.json();
+      } else {
+        // If response is not JSON, return a success object
+        return { success: true };
+      }
+    },
+    onSuccess: () => {
+      refetchPlaylists();
+      queryClient.invalidateQueries({ queryKey: ["/api/playlists"] });
+      toast({ title: "Song removed from playlist" });
+    },
+    onError: (error: any) => {
+      toast({ 
+        title: "Failed to remove song", 
+        description: error.message,
+        variant: "destructive" 
+      });
+    },
+  });
+
+  // Delete playlist mutation
+  const deletePlaylistMutation = useMutation({
+    mutationFn: async (playlistId: string) => {
+      const response = await fetch(`/api/playlists/${playlistId}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        // Try to parse error message, but handle cases where response might not be JSON
+        let errorMessage = "Failed to delete playlist";
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.message || errorMessage;
+        } catch {
+          // If response is not JSON, use status text
+          errorMessage = response.statusText || errorMessage;
+        }
+        throw new Error(errorMessage);
+      }
+
+      // Ensure response is JSON before parsing
+      const contentType = response.headers.get("content-type");
+      if (contentType && contentType.includes("application/json")) {
+        return response.json();
+      } else {
+        // If response is not JSON, return a success object
+        return { success: true };
+      }
+    },
+    onSuccess: () => {
+      refetchPlaylists();
+      queryClient.invalidateQueries({ queryKey: ["/api/playlists"] });
+      setSelectedPlaylistId(null);
+      setActivePage("library");
+      toast({ title: "Playlist deleted successfully" });
+    },
+    onError: (error: any) => {
+      toast({ 
+        title: "Failed to delete playlist", 
+        description: error.message,
+        variant: "destructive" 
+      });
+    },
+  });
+
+  // Add these handler functions:
+  const handleRemoveSongFromPlaylist = (playlistId: string, songId: string) => {
+    removeSongFromPlaylistMutation.mutate({ playlistId, songId });
+  };
+
+  const handleDeletePlaylist = (playlistId: string) => {
+    deletePlaylistMutation.mutate(playlistId);
   };
 
   if (authLoading) {
@@ -471,9 +619,24 @@ function MainApp() {
                       {playlists.map((playlist) => (
                         <Card
                           key={playlist.id}
-                          className="p-4 hover-elevate active-elevate-2 cursor-pointer"
+                          className="p-4 hover-elevate active-elevate-2 cursor-pointer group relative"
                           onClick={() => handlePlaylistClick(playlist.id)}
                         >
+                          {/* Delete button overlay */}
+                          <Button
+                            size="icon"
+                            variant="destructive"
+                            className="absolute -top-2 -right-2 opacity-0 group-hover:opacity-100 transition-opacity w-6 h-6"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (confirm(`Are you sure you want to delete "${playlist.name}"?`)) {
+                                handleDeletePlaylist(playlist.id);
+                              }
+                            }}
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </Button>
+                          
                           <div className="aspect-square bg-muted rounded-md mb-4 flex items-center justify-center overflow-hidden">
                             {playlist.coverUrl ? (
                               <img 
@@ -491,6 +654,9 @@ function MainApp() {
                               {playlist.description}
                             </p>
                           )}
+                          <p className="text-xs text-muted-foreground mt-1">
+                            {playlist.songIds?.length || 0} songs
+                          </p>
                         </Card>
                       ))}
                     </div>
@@ -504,6 +670,8 @@ function MainApp() {
                 playlist={selectedPlaylist}
                 songs={songs}
                 onBack={handleBackFromPlaylist}
+                onRemoveSong={handleRemoveSongFromPlaylist}
+                onDeletePlaylist={handleDeletePlaylist}
               />
             )}
 
@@ -618,6 +786,7 @@ function MainApp() {
           currentSong={
             currentSong
               ? {
+                  id: currentSong.id,
                   title: currentSong.title,
                   artist: currentSong.artist,
                   coverUrl: currentSong.coverUrl,
@@ -630,6 +799,7 @@ function MainApp() {
           onPrevious={previous}
           onShuffle={toggleShuffle}
           onRepeat={toggleRepeat}
+          onAddToPlaylist={handleOpenAddToPlaylist}
           shuffle={shuffle}
           repeat={repeat}
           currentTime={currentTime}
@@ -637,6 +807,19 @@ function MainApp() {
           onSeek={seek}
           volume={volume}
           onVolumeChange={setVolume}
+        />
+
+        {/* Add the AddToPlaylistModal component at the end of the return statement: */}
+        <AddToPlaylistModal
+          open={showAddToPlaylistModal}
+          onClose={() => setShowAddToPlaylistModal(false)}
+          playlists={playlists}
+          currentSongId={currentSong?.id || ""}
+          onCreatePlaylist={() => {
+            setShowAddToPlaylistModal(false);
+            setShowCreatePlaylistModal(true);
+          }}
+          onAddToPlaylist={handleAddToPlaylist}
         />
       </div>
 

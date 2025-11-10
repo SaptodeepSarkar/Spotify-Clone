@@ -1,7 +1,13 @@
-// PlaylistDetail.tsx - UPDATED
-import { Play, MoreHorizontal, Clock } from "lucide-react";
+// PlaylistDetail.tsx - UPDATED (fix imports)
+import { Play, MoreHorizontal, Clock, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { usePlayer } from "@/contexts/PlayerContext";
 import type { Song, Playlist } from "@shared/schema";
 
@@ -9,9 +15,17 @@ interface PlaylistDetailProps {
   playlist: Playlist;
   songs: Song[];
   onBack: () => void;
+  onRemoveSong?: (playlistId: string, songId: string) => void;
+  onDeletePlaylist?: (playlistId: string) => void;
 }
 
-export default function PlaylistDetail({ playlist, songs, onBack }: PlaylistDetailProps) {
+export default function PlaylistDetail({ 
+  playlist, 
+  songs, 
+  onBack, 
+  onRemoveSong,
+  onDeletePlaylist 
+}: PlaylistDetailProps) {
   const { playSong, setQueue } = usePlayer();
 
   // Filter songs that are in this playlist
@@ -29,6 +43,19 @@ export default function PlaylistDetail({ playlist, songs, onBack }: PlaylistDeta
   const handlePlaySong = (song: Song) => {
     setQueue(playlistSongs);
     playSong(song);
+  };
+
+  const handleRemoveSong = (songId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (onRemoveSong) {
+      onRemoveSong(playlist.id, songId);
+    }
+  };
+
+  const handleDeletePlaylist = () => {
+    if (onDeletePlaylist && confirm(`Are you sure you want to delete "${playlist.name}"?`)) {
+      onDeletePlaylist(playlist.id);
+    }
   };
 
   const formatDuration = (seconds: number) => {
@@ -92,14 +119,27 @@ export default function PlaylistDetail({ playlist, songs, onBack }: PlaylistDeta
           <Play className="w-6 h-6 fill-current" />
         </Button>
         
-        <Button variant="ghost" size="icon">
-          <MoreHorizontal className="w-6 h-6" />
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon">
+              <MoreHorizontal className="w-6 h-6" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem 
+              onClick={handleDeletePlaylist}
+              className="text-destructive focus:text-destructive"
+            >
+              <Trash2 className="w-4 h-4 mr-2" />
+              Delete Playlist
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       {/* Songs List */}
       <div className="mt-8">
-        <div className="grid grid-cols-[50px_1fr_1fr_1fr_100px] gap-4 px-4 py-2 text-sm text-muted-foreground border-b border-border">
+        <div className="grid grid-cols-[50px_1fr_1fr_1fr_100px_50px] gap-4 px-4 py-2 text-sm text-muted-foreground border-b border-border">
           <div>#</div>
           <div>Title</div>
           <div>Album</div>
@@ -107,13 +147,14 @@ export default function PlaylistDetail({ playlist, songs, onBack }: PlaylistDeta
           <div className="flex items-center justify-center">
             <Clock className="w-4 h-4" />
           </div>
+          <div></div>
         </div>
         
         <div className="divide-y divide-border">
           {playlistSongs.map((song, index) => (
             <div
               key={song.id}
-              className="grid grid-cols-[50px_1fr_1fr_1fr_100px] gap-4 px-4 py-3 hover-elevate group items-center cursor-pointer"
+              className="grid grid-cols-[50px_1fr_1fr_1fr_100px_50px] gap-4 px-4 py-3 hover-elevate group items-center cursor-pointer"
               onClick={() => handlePlaySong(song)}
               data-testid={`playlist-song-${song.id}`}
             >
@@ -152,6 +193,28 @@ export default function PlaylistDetail({ playlist, songs, onBack }: PlaylistDeta
               <div className="text-sm text-muted-foreground text-center">
                 {formatDuration(song.duration)}
               </div>
+              
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button 
+                    size="icon" 
+                    variant="ghost" 
+                    className="opacity-0 group-hover:opacity-100 transition-opacity"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <MoreHorizontal className="w-4 h-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem 
+                    onClick={(e) => handleRemoveSong(song.id, e)}
+                    className="text-destructive focus:text-destructive"
+                  >
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    Remove from Playlist
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           ))}
         </div>

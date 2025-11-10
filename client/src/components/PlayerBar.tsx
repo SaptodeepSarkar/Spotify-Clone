@@ -1,10 +1,11 @@
-import { Play, Pause, SkipBack, SkipForward, Shuffle, Repeat, Volume2, Heart } from "lucide-react";
+// PlayerBar.tsx - UPDATED
+import { Play, Pause, SkipBack, SkipForward, Shuffle, Repeat, Volume2, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
-import { useState } from "react";
 
 interface PlayerBarProps {
   currentSong?: {
+    id: string;
     title: string;
     artist: string;
     coverUrl?: string;
@@ -15,6 +16,7 @@ interface PlayerBarProps {
   onPrevious: () => void;
   onShuffle: () => void;
   onRepeat: () => void;
+  onAddToPlaylist: () => void;
   shuffle: boolean;
   repeat: boolean;
   currentTime: number;
@@ -32,6 +34,7 @@ export default function PlayerBar({
   onPrevious,
   onShuffle,
   onRepeat,
+  onAddToPlaylist,
   shuffle,
   repeat,
   currentTime,
@@ -40,8 +43,6 @@ export default function PlayerBar({
   volume,
   onVolumeChange,
 }: PlayerBarProps) {
-  const [liked, setLiked] = useState(false);
-
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
@@ -67,11 +68,11 @@ export default function PlayerBar({
             <Button
               size="icon"
               variant="ghost"
-              className={`${liked ? 'text-primary' : ''}`}
-              onClick={() => setLiked(!liked)}
-              data-testid="button-like"
+              onClick={onAddToPlaylist}
+              data-testid="button-add-to-playlist"
+              title="Add to playlist"
             >
-              <Heart className={`w-4 h-4 ${liked ? 'fill-current' : ''}`} />
+              <Plus className="w-4 h-4" />
             </Button>
           </>
         )}

@@ -6,13 +6,21 @@ import { randomUUID } from 'crypto';
 import bcrypt from 'bcryptjs';
 
 const DATA_DIR = path.join(process.cwd(), 'server', 'data');
+const SONG_DIR = path.join(process.cwd(), 'Songs'); // Changed to song folder
+const HTTP_SERVER_URL = 'http://localhost:8000'; // Python HTTP server URL
 
-// Ensure data directory exists
-async function ensureDataDir() {
+// Ensure data and song directories exist
+async function ensureDirs() {
     try {
         await fs.access(DATA_DIR);
     } catch {
         await fs.mkdir(DATA_DIR, { recursive: true });
+    }
+    
+    try {
+        await fs.access(SONG_DIR);
+    } catch {
+        await fs.mkdir(SONG_DIR, { recursive: true });
     }
 }
 
@@ -27,7 +35,7 @@ async function readJSONFile<T>(filename: string): Promise<T[]> {
 }
 
 async function writeJSONFile<T>(filename: string, data: T[]): Promise<void> {
-    await ensureDataDir();
+    await ensureDirs();
     await fs.writeFile(
         path.join(DATA_DIR, filename),
         JSON.stringify(data, null, 2),
@@ -56,6 +64,8 @@ export interface IStorage {
     createPlaylist(playlist: InsertPlaylist): Promise<Playlist>;
     updatePlaylist(id: string, playlist: Partial<InsertPlaylist>): Promise<Playlist | undefined>;
     deletePlaylist(id: string): Promise<boolean>;
+    addSongToPlaylist(playlistId: string, songId: string): Promise<Playlist | undefined>;
+    removeSongFromPlaylist(playlistId: string, songId: string): Promise<Playlist | undefined>;
 }
 
 export class JsonStorage implements IStorage {
@@ -215,6 +225,42 @@ export class JsonStorage implements IStorage {
         if (filteredPlaylists.length === initialLength) return false;
         await writeJSONFile('playlists.json', filteredPlaylists);
         return true;
+    }
+
+    // Add song to playlist
+    async addSongToPlaylist(playlistId: string, songId: string): Promise<Playlist | undefined> {
+        const playlists = await readJSONFile<Playlist>('playlists.json');
+        const playlistIndex = playlists.findIndex(playlist => playlist.id === playlistId);
+        if (playlistIndex === -1) return undefined;
+
+        const playlist = playlists[playlistIndex];
+        
+        // Check if song already exists in playlist
+        if (!playlist.songIds.includes(songId)) {
+            playlist.songIds.push(songId);
+            await writeJSONFile('playlists.json', playlists);
+        }
+        
+        return playlist;
+    }
+
+    // Remove song from playlist
+    async removeSongFromPlaylist(playlistId: string, songId: string): Promise<Playlist | undefined> {
+      const playlists = await readJSONFile<Playlist>('playlists.json');
+      const playlistIndex = playlists.findIndex(playlist => playlist.id === playlistId);
+      if (playlistIndex === -1) return undefined;
+        
+      const playlist = playlists[playlistIndex];
+        
+      // Check if song exists in playlist before removing
+      if (!playlist.songIds.includes(songId)) {
+        return playlist; // Return unchanged playlist if song not found
+      }
+      
+      playlist.songIds = playlist.songIds.filter(id => id !== songId);
+      await writeJSONFile('playlists.json', playlists);
+      
+      return playlist;
     }
 }
 

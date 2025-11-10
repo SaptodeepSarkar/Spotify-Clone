@@ -1,3 +1,4 @@
+// routes.ts
 import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
@@ -7,7 +8,7 @@ import multer, { type FileFilterCallback } from "multer";
 import path from "path";
 import fs from "fs/promises";
 import { z } from "zod";
-import { insertSongSchema, insertPlaylistSchema } from "@shared/schema";
+import { insertSongSchema, insertPlaylistSchema, songUploadSchema } from "@shared/schema";
 import { registerUserSchema } from "@shared/schema";
 import bcrypt from "bcryptjs";
 import { getAudioDuration } from "./utils/audioUtils";
@@ -25,7 +26,7 @@ declare module "express-session" {
 const upload = multer({
   storage: multer.diskStorage({
     destination: async (req: Express.Request, file: Express.Multer.File, cb: (error: Error | null, destination: string) => void) => {
-      const uploadsDir = path.join(process.cwd(), "uploads");
+      const uploadsDir = path.join(process.cwd(), "Songs");
       await fs.mkdir(uploadsDir, { recursive: true });
       cb(null, uploadsDir);
     },
@@ -39,14 +40,14 @@ const upload = multer({
     const allowedAudioTypes = /mp3|wav|ogg|m4a|aac/;
     
     const ext = path.extname(file.originalname).toLowerCase();
-    if (file.fieldname === 'cover') {
+    if (file.fieldname === 'coverFile') {
       const isValidImage = allowedImageTypes.test(ext) && allowedImageTypes.test(file.mimetype);
       if (isValidImage) {
         cb(null, true);
       } else {
         cb(new Error("Only image files are allowed for cover"));
       }
-    } else if (file.fieldname === 'audio') {
+    } else if (file.fieldname === 'audioFile') {
       const isValidAudio = allowedAudioTypes.test(ext);
       if (isValidAudio) {
         cb(null, true);
@@ -241,29 +242,59 @@ export async function registerRoutes(app: Express): Promise<Server> {
     "/api/songs",
     requireAdmin,
     upload.fields([
-      { name: 'cover', maxCount: 1 },
-      { name: 'audio', maxCount: 1 }
+      { name: 'coverFile', maxCount: 1 },
+      { name: 'audioFile', maxCount: 1 }
     ]),
     async (req: Request, res: Response) => {
       try {
         const files = req.files as { [fieldname: string]: Express.Multer.File[] };
-        const coverFile = files['cover']?.[0];
-        const audioFile = files['audio']?.[0];
+        const coverFile = files['coverFile']?.[0];
+        const audioFile = files['audioFile']?.[0];
 
-        if (!audioFile) {
-          return res.status(400).json({ message: "Audio file is required" });
+        // Validate that we have either audio file or audio URL
+        if (!audioFile && !req.body.audioUrl) {
+          return res.status(400).json({ message: "Either audio file or audio URL is required" });
         }
 
-        // Get audio duration
-        const duration = await getAudioDuration(audioFile.path);
+        // Validate that we have either cover file or cover URL
+        if (!coverFile && !req.body.coverImageUrl) {
+          return res.status(400).json({ message: "Either cover file or cover URL is required" });
+        }
+
+        let duration = parseInt(req.body.duration) || 0;
+        
+        // If audio file is uploaded, extract duration from it
+        if (audioFile) {
+          try {
+            duration = await getAudioDuration(audioFile.path);
+          } catch (error) {
+            console.error('Error extracting audio duration:', error);
+            // Use manually provided duration if extraction fails
+            if (!duration) {
+              return res.status(400).json({ message: "Duration is required when uploading audio files" });
+            }
+          }
+        }
+
+        // Determine audio URL - either from uploaded file or provided URL
+        let audioUrl = req.body.audioUrl;
+        if (audioFile) {
+          audioUrl = `http://127.0.0.1:8000/Songs/${audioFile.filename}`;
+        }
+
+        // Determine cover URL - either from uploaded file or provided URL
+        let coverUrl = req.body.coverImageUrl;
+        if (coverFile) {
+          coverUrl = `http://127.0.0.1:8000/uploads/${coverFile.filename}`;
+        }
 
         const songData = insertSongSchema.parse({
           title: req.body.title,
           artist: req.body.artist,
-          album: req.body.album,
+          album: req.body.album || "",
           duration: duration,
-          audioUrl: `/uploads/${audioFile.filename}`,
-          coverUrl: coverFile ? `/uploads/${coverFile.filename}` : undefined,
+          audioUrl: audioUrl,
+          coverUrl: coverUrl || null,
         });
 
         const song = await storage.createSong(songData);
@@ -281,17 +312,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.patch(
     "/api/songs/:id",
     requireAdmin,
-    upload.single("cover"),
+    upload.fields([
+      { name: 'coverFile', maxCount: 1 },
+      { name: 'audioFile', maxCount: 1 }
+    ]),
     async (req: Request, res: Response) => {
       try {
-        const file = (req as any).file;
+        const files = req.files as { [fieldname: string]: Express.Multer.File[] };
+        const coverFile = files['coverFile']?.[0];
+        const audioFile = files['audioFile']?.[0];
+
         const updateData: any = {};
         if (req.body.title) updateData.title = req.body.title;
         if (req.body.artist) updateData.artist = req.body.artist;
         if (req.body.album) updateData.album = req.body.album;
         if (req.body.duration) updateData.duration = parseInt(req.body.duration);
-        if (req.body.audioUrl) updateData.audioUrl = req.body.audioUrl;
-        if (file) updateData.coverUrl = `/uploads/${file.filename}`;
+
+        let duration = updateData.duration;
+
+        // Handle audio file/URL update
+        if (audioFile) {
+          // Extract duration from new audio file
+          try {
+            duration = await getAudioDuration(audioFile.path);
+            updateData.duration = duration;
+          } catch (error) {
+            console.error('Error extracting audio duration:', error);
+            // Keep existing duration if extraction fails
+            if (!duration) {
+              const existingSong = await storage.getSong(req.params.id);
+              if (existingSong) {
+                updateData.duration = existingSong.duration;
+              }
+            }
+          }
+          updateData.audioUrl = `/uploads/${audioFile.filename}`;
+        } else if (req.body.audioUrl) {
+          updateData.audioUrl = req.body.audioUrl;
+        }
+
+        // Handle cover file/URL update
+        if (coverFile) {
+          updateData.coverUrl = `/uploads/${coverFile.filename}`;
+        } else if (req.body.coverImageUrl) {
+          updateData.coverUrl = req.body.coverImageUrl;
+        }
 
         const song = await storage.updateSong(req.params.id, updateData);
         if (!song) {
@@ -299,6 +364,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
         res.json(song);
       } catch (error) {
+        console.error('Error updating song:', error);
         res.status(500).json({ message: "Failed to update song" });
       }
     }
@@ -423,6 +489,74 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   );
 
+  // Add song to playlist endpoint
+  app.post("/api/playlists/:id/add-song", requireAuth, async (req, res) => {
+    try {
+      const { songId } = req.body;
+      
+      if (!songId) {
+        return res.status(400).json({ message: "Song ID is required" });
+      }
+    
+      const playlist = await storage.getPlaylist(req.params.id);
+      if (!playlist) {
+        return res.status(404).json({ message: "Playlist not found" });
+      }
+    
+      // Check if user owns this playlist
+      if (playlist.userId !== req.session.userId) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+    
+      // Check if song exists
+      const song = await storage.getSong(songId);
+      if (!song) {
+        return res.status(404).json({ message: "Song not found" });
+      }
+    
+      const updatedPlaylist = await storage.addSongToPlaylist(req.params.id, songId);
+      if (!updatedPlaylist) {
+        return res.status(404).json({ message: "Playlist not found" });
+      }
+      
+      res.json(updatedPlaylist);
+    } catch (error) {
+      console.error('Error adding song to playlist:', error);
+      res.status(500).json({ message: "Failed to add song to playlist" });
+    }
+  });
+
+  app.post("/api/playlists/:id/remove-song", requireAuth, async (req, res) => {
+    try {
+      const { songId } = req.body;
+
+      if (!songId) {
+        return res.status(400).json({ message: "Song ID is required" });
+      }
+
+      const playlist = await storage.getPlaylist(req.params.id);
+      if (!playlist) {
+        return res.status(404).json({ message: "Playlist not found" });
+      }
+
+      // Check if user owns this playlist
+      if (playlist.userId !== req.session.userId) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+
+      const updatedPlaylist = await storage.removeSongFromPlaylist(req.params.id, songId);
+
+      if (!updatedPlaylist) {
+        return res.status(404).json({ message: "Playlist not found" });
+      }
+
+      res.json(updatedPlaylist);
+    } catch (error) {
+      console.error('Error removing song from playlist:', error);
+      res.status(500).json({ message: "Failed to remove song from playlist" });
+    }
+  });
+
   app.patch("/api/playlists/:id", requireAuth, async (req, res) => {
     try {
       const playlist = await storage.getPlaylist(req.params.id);
@@ -455,7 +589,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const deleted = await storage.deletePlaylist(req.params.id);
-      res.json({ message: "Playlist deleted successfully" });
+      if (!deleted) {
+        return res.status(404).json({ message: "Playlist not found" });
+      }
+
+      res.json({ message: "Playlist deleted successfully", success: true });
     } catch (error) {
       res.status(500).json({ message: "Failed to delete playlist" });
     }
